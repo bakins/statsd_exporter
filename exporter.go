@@ -473,12 +473,12 @@ samples:
 }
 
 type StatsDUDPListener struct {
-	conn         *net.UDPConn
-	eventHandler eventHandler
+	conn        *net.UDPConn
+	lineHandler lineHandler
 }
 
-func (l *StatsDUDPListener) SetEventHandler(eh eventHandler) {
-	l.eventHandler = eh
+func (l *StatsDUDPListener) SetLineHandler(lh lineHandler) {
+	l.lineHandler = lh
 }
 
 func (l *StatsDUDPListener) Listen() {
@@ -503,17 +503,17 @@ func (l *StatsDUDPListener) handlePacket(packet []byte) {
 	lines := strings.Split(string(packet), "\n")
 	for _, line := range lines {
 		linesReceived.Inc()
-		l.eventHandler.queue(lineToEvents(line))
+		l.lineHandler.push(line)
 	}
 }
 
 type StatsDTCPListener struct {
-	conn         *net.TCPListener
-	eventHandler eventHandler
+	conn        *net.TCPListener
+	lineHandler lineHandler
 }
 
-func (l *StatsDTCPListener) SetEventHandler(eh eventHandler) {
-	l.eventHandler = eh
+func (l *StatsDTCPListener) SetLineHandler(lh lineHandler) {
+	l.lineHandler = lh
 }
 
 func (l *StatsDTCPListener) Listen() {
@@ -552,17 +552,17 @@ func (l *StatsDTCPListener) handleConn(c *net.TCPConn) {
 			break
 		}
 		linesReceived.Inc()
-		l.eventHandler.queue(lineToEvents(string(line)))
+		l.lineHandler.push(string(line))
 	}
 }
 
 type StatsDUnixgramListener struct {
-	conn         *net.UnixConn
-	eventHandler eventHandler
+	conn        *net.UnixConn
+	lineHandler lineHandler
 }
 
-func (l *StatsDUnixgramListener) SetEventHandler(eh eventHandler) {
-	l.eventHandler = eh
+func (l *StatsDUnixgramListener) SetLineHandler(lh lineHandler) {
+	l.lineHandler = lh
 }
 
 func (l *StatsDUnixgramListener) Listen() {
@@ -586,6 +586,6 @@ func (l *StatsDUnixgramListener) handlePacket(packet []byte) {
 	lines := strings.Split(string(packet), "\n")
 	for _, line := range lines {
 		linesReceived.Inc()
-		l.eventHandler.queue(lineToEvents(string(line)))
+		l.lineHandler.push(string(line))
 	}
 }

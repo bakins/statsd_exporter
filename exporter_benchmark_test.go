@@ -42,7 +42,10 @@ func benchmarkUDPListener(times int, b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		// there are more events than input lines, need bigger buffer
 		events := make(chan Events, len(bytesInput)*times*2)
-		l := StatsDUDPListener{eventHandler: &unbufferedEventHandler{c: events}}
+		lh := unbufferedLineHandler{
+			eventHandler: &unbufferedEventHandler{c: events},
+		}
+		l := StatsDUDPListener{lineHandler: &lh}
 
 		for i := 0; i < times; i++ {
 			for _, line := range bytesInput {

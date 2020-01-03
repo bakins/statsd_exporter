@@ -141,6 +141,8 @@ func main() {
 		eventQueueSize       = kingpin.Flag("statsd.event-queue-size", "Size of internal queue for processing events").Default("10000").Int()
 		eventFlushThreshold  = kingpin.Flag("statsd.event-flush-threshold", "Number of events to hold in queue before flushing").Default("1000").Int()
 		eventFlushInterval   = kingpin.Flag("statsd.event-flush-interval", "Number of events to hold in queue before flushing").Default("200ms").Duration()
+		lineQueueSize        = kingpin.Flag("statsd.line-queue-size", "Size of internal queue for processing statsd lines").Default("10000").Int()
+		lineWorkers          = kingpin.Flag("statsd.line-workers", "Number of statsd line processing workers").Default("1").Int()
 		dumpFSMPath          = kingpin.Flag("debug.dump-fsm", "The path to dump internal FSM generated for glob matching as Dot file.").Default("").String()
 	)
 
@@ -164,6 +166,9 @@ func main() {
 	defer close(events)
 	eventQueue := newEventQueue(events, *eventFlushThreshold, *eventFlushInterval)
 
+	lp := newLineProcessor(*lineQueueSize, eventQueue, *lineWorkers)
+	defer lp.stop()
+
 	if *statsdListenUDP != "" {
 		udpListenAddr := udpAddrFromString(*statsdListenUDP)
 		uconn, err := net.ListenUDP("udp", udpListenAddr)
@@ -178,7 +183,7 @@ func main() {
 			}
 		}
 
-		ul := &StatsDUDPListener{conn: uconn, eventHandler: eventQueue}
+		ul := &StatsDUDPListener{conn: uconn, lineHandler: lp}
 		go ul.Listen()
 	}
 
@@ -190,7 +195,7 @@ func main() {
 		}
 		defer tconn.Close()
 
-		tl := &StatsDTCPListener{conn: tconn, eventHandler: eventQueue}
+		tl := &StatsDTCPListener{conn: tconn, lineHandler: lp}
 		go tl.Listen()
 	}
 
@@ -216,7 +221,7 @@ func main() {
 			}
 		}
 
-		ul := &StatsDUnixgramListener{conn: uxgconn, eventHandler: eventQueue}
+		ul := &StatsDUnixgramListener{conn: uxgconn, lineHandler: lp}
 		go ul.Listen()
 
 		// if it's an abstract unix domain socket, it won't exist on fs

@@ -135,6 +135,12 @@ var (
 		},
 		[]string{"type"},
 	)
+	linesDropped = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "statsd_exporter_lines_dropped_total",
+			Help: "The total number of StatsD lines dropped.",
+		},
+	)
 )
 
 func init() {
@@ -157,4 +163,5 @@ func init() {
 	prometheus.MustRegister(errorEventStats)
 	prometheus.MustRegister(eventsActions)
 	prometheus.MustRegister(metricsCount)
+	prometheus.MustRegister(linesDropped)
 }

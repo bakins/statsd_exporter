@@ -415,7 +415,11 @@ func TestHandlePacket(t *testing.T) {
 
 	for k, l := range []statsDPacketHandler{&StatsDUDPListener{}, &mockStatsDTCPListener{}} {
 		events := make(chan Events, 32)
-		l.SetEventHandler(&unbufferedEventHandler{c: events})
+		lh := unbufferedLineHandler{
+			eventHandler: &unbufferedEventHandler{c: events},
+		}
+		l.SetLineHandler(&lh)
+
 		for i, scenario := range scenarios {
 			l.handlePacket([]byte(scenario.in))
 

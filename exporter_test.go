@@ -489,11 +489,13 @@ func TestInvalidUtf8InDatadogTagValue(t *testing.T) {
 	}()
 
 	events := make(chan Events)
-	ueh := &unbufferedEventHandler{c: events}
+	lh := unbufferedLineHandler{
+		eventHandler: &unbufferedEventHandler{c: events},
+	}
 
 	go func() {
 		for _, l := range []statsDPacketHandler{&StatsDUDPListener{}, &mockStatsDTCPListener{}} {
-			l.SetEventHandler(ueh)
+			l.SetLineHandler(&lh)
 			l.handlePacket([]byte("bar:200|c|#tag:value\nbar:200|c|#tag:\xc3\x28invalid"))
 		}
 		close(events)
@@ -642,7 +644,7 @@ func TestCounterIncrement(t *testing.T) {
 
 type statsDPacketHandler interface {
 	handlePacket(packet []byte)
-	SetEventHandler(eh eventHandler)
+	SetLineHandler(lh lineHandler)
 }
 
 type mockStatsDTCPListener struct {
