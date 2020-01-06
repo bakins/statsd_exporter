@@ -47,16 +47,23 @@ func (u uncheckedCollector) Collect(c chan<- prometheus.Metric) {
 }
 
 type Exporter struct {
-	mapper   *mapper.MetricMapper
-	registry *registry
+	mapper      *mapper.MetricMapper
+	registry    *registry
+	escapeCache *escapeMetricNameCache
 }
 
 // Replace invalid characters in the metric name with "_"
 // Valid characters are a-z, A-Z, 0-9, and _
-func escapeMetricName(metricName string) string {
+func escapeMetricName(metricName string, cache *escapeMetricNameCache) string {
 	metricLen := len(metricName)
 	if metricLen == 0 {
 		return ""
+	}
+
+	if cache != nil {
+		if v, ok := cache.get(metricName); ok {
+			return v
+		}
 	}
 
 	escaped := false
@@ -96,6 +103,11 @@ func escapeMetricName(metricName string) string {
 	if !escaped {
 		// This is the happy path where nothing had to be escaped, so we can
 		// avoid doing anything.
+
+		if cache != nil {
+			cache.set(metricName, metricName)
+		}
+
 		return metricName
 	}
 
@@ -103,7 +115,13 @@ func escapeMetricName(metricName string) string {
 		sb.WriteString(metricName[offset:])
 	}
 
-	return sb.String()
+	v := sb.String()
+
+	if cache != nil {
+		cache.set(metricName, v)
+	}
+
+	return v
 }
 
 // Listen handles all events sent to the given channel sequentially. It
@@ -156,14 +174,14 @@ func (b *Exporter) handleEvent(event Event) {
 			errorEventStats.WithLabelValues("empty_metric_name").Inc()
 			return
 		}
-		metricName = escapeMetricName(mapping.Name)
+		metricName = escapeMetricName(mapping.Name, b.escapeCache)
 		for label, value := range labels {
 			prometheusLabels[label] = value
 		}
 		eventsActions.WithLabelValues(string(mapping.Action)).Inc()
 	} else {
 		eventsUnmapped.Inc()
-		metricName = escapeMetricName(event.MetricName())
+		metricName = escapeMetricName(event.MetricName(), b.escapeCache)
 	}
 
 	switch ev := event.(type) {
@@ -240,10 +258,11 @@ func (b *Exporter) handleEvent(event Event) {
 	}
 }
 
-func NewExporter(mapper *mapper.MetricMapper) *Exporter {
+func NewExporter(mapper *mapper.MetricMapper, escapeCache *escapeMetricNameCache) *Exporter {
 	return &Exporter{
-		mapper:   mapper,
-		registry: newRegistry(mapper),
+		mapper:      mapper,
+		registry:    newRegistry(mapper),
+		escapeCache: escapeCache,
 	}
 }
 
@@ -275,7 +294,7 @@ func buildEvent(statType, metric string, value float64, relative bool, labels ma
 	}
 }
 
-func parseTag(component, tag string, separator rune, labels map[string]string) {
+func parseTag(component, tag string, separator rune, labels map[string]string, cache *escapeMetricNameCache) {
 	// Entirely empty tag is an error
 	if len(tag) == 0 {
 		tagErrors.Inc()
@@ -293,7 +312,7 @@ func parseTag(component, tag string, separator rune, labels map[string]string) {
 				tagErrors.Inc()
 				log.Debugf("Malformed name tag %s=%s in component %s", k, v, component)
 			} else {
-				labels[escapeMetricName(k)] = v
+				labels[escapeMetricName(k, cache)] = v
 			}
 			return
 		}
@@ -304,20 +323,20 @@ func parseTag(component, tag string, separator rune, labels map[string]string) {
 	log.Debugf("Malformed name tag %s in component %s", tag, component)
 }
 
-func parseNameTags(component string, labels map[string]string) {
+func parseNameTags(component string, labels map[string]string, cache *escapeMetricNameCache) {
 	lastTagEndIndex := 0
 	for i, c := range component {
 		if c == ',' {
 			tag := component[lastTagEndIndex:i]
 			lastTagEndIndex = i + 1
-			parseTag(component, tag, '=', labels)
+			parseTag(component, tag, '=', labels, cache)
 		}
 	}
 
 	// If we're not off the end of the string, add the last tag
 	if lastTagEndIndex < len(component) {
 		tag := component[lastTagEndIndex:]
-		parseTag(component, tag, '=', labels)
+		parseTag(component, tag, '=', labels, cache)
 	}
 }
 
@@ -328,38 +347,38 @@ func trimLeftHash(s string) string {
 	return s
 }
 
-func parseDogStatsDTags(component string, labels map[string]string) {
+func parseDogStatsDTags(component string, labels map[string]string, cache *escapeMetricNameCache) {
 	lastTagEndIndex := 0
 	for i, c := range component {
 		if c == ',' {
 			tag := component[lastTagEndIndex:i]
 			lastTagEndIndex = i + 1
-			parseTag(component, trimLeftHash(tag), ':', labels)
+			parseTag(component, trimLeftHash(tag), ':', labels, cache)
 		}
 	}
 
 	// If we're not off the end of the string, add the last tag
 	if lastTagEndIndex < len(component) {
 		tag := component[lastTagEndIndex:]
-		parseTag(component, trimLeftHash(tag), ':', labels)
+		parseTag(component, trimLeftHash(tag), ':', labels, cache)
 	}
 }
 
-func parseNameAndTags(name string, labels map[string]string) string {
+func parseNameAndTags(name string, labels map[string]string, cache *escapeMetricNameCache) string {
 	for i, c := range name {
 		// `#` delimits start of tags by Librato
 		// https://www.librato.com/docs/kb/collect/collection_agents/stastd/#stat-level-tags
 		// `,` delimits start of tags by InfluxDB
 		// https://www.influxdata.com/blog/getting-started-with-sending-statsd-metrics-to-telegraf-influxdb/#introducing-influx-statsd
 		if c == '#' || c == ',' {
-			parseNameTags(name[i+1:], labels)
+			parseNameTags(name[i+1:], labels, cache)
 			return name[:i]
 		}
 	}
 	return name
 }
 
-func lineToEvents(line string) Events {
+func lineToEvents(line string, cache *escapeMetricNameCache) Events {
 	events := Events{}
 	if line == "" {
 		return events
@@ -373,7 +392,7 @@ func lineToEvents(line string) Events {
 	}
 
 	labels := map[string]string{}
-	metric := parseNameAndTags(elements[0], labels)
+	metric := parseNameAndTags(elements[0], labels, cache)
 
 	var samples []string
 	if strings.Contains(elements[1], "|#") {
@@ -446,7 +465,7 @@ samples:
 						multiplyEvents = int(1 / samplingFactor)
 					}
 				case '#':
-					parseDogStatsDTags(component[1:], labels)
+					parseDogStatsDTags(component[1:], labels, cache)
 				default:
 					log.Debugf("Invalid sampling factor or tag section %s on line %s", components[2], line)
 					sampleErrors.WithLabelValues("invalid_sample_factor").Inc()
@@ -475,6 +494,7 @@ samples:
 type StatsDUDPListener struct {
 	conn         *net.UDPConn
 	eventHandler eventHandler
+	escapeCache  *escapeMetricNameCache
 }
 
 func (l *StatsDUDPListener) SetEventHandler(eh eventHandler) {
@@ -503,13 +523,14 @@ func (l *StatsDUDPListener) handlePacket(packet []byte) {
 	lines := strings.Split(string(packet), "\n")
 	for _, line := range lines {
 		linesReceived.Inc()
-		l.eventHandler.queue(lineToEvents(line))
+		l.eventHandler.queue(lineToEvents(line, l.escapeCache))
 	}
 }
 
 type StatsDTCPListener struct {
 	conn         *net.TCPListener
 	eventHandler eventHandler
+	escapeCache  *escapeMetricNameCache
 }
 
 func (l *StatsDTCPListener) SetEventHandler(eh eventHandler) {
@@ -552,13 +573,14 @@ func (l *StatsDTCPListener) handleConn(c *net.TCPConn) {
 			break
 		}
 		linesReceived.Inc()
-		l.eventHandler.queue(lineToEvents(string(line)))
+		l.eventHandler.queue(lineToEvents(string(line), l.escapeCache))
 	}
 }
 
 type StatsDUnixgramListener struct {
 	conn         *net.UnixConn
 	eventHandler eventHandler
+	escapeCache  *escapeMetricNameCache
 }
 
 func (l *StatsDUnixgramListener) SetEventHandler(eh eventHandler) {
@@ -586,6 +608,6 @@ func (l *StatsDUnixgramListener) handlePacket(packet []byte) {
 	lines := strings.Split(string(packet), "\n")
 	for _, line := range lines {
 		linesReceived.Inc()
-		l.eventHandler.queue(lineToEvents(string(line)))
+		l.eventHandler.queue(lineToEvents(string(line), l.escapeCache))
 	}
 }

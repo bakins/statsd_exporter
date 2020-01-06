@@ -135,6 +135,24 @@ var (
 		},
 		[]string{"type"},
 	)
+	escapeCacheGets = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "statsd_exporter_escape_cache_gets_total",
+			Help: "The total number of escape cache gets.",
+		},
+	)
+	escapeCacheHits = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "statsd_exporter_escape_cache_hits_total",
+			Help: "The total number of escape cache hits.",
+		},
+	)
+	escapeCacheItems = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "statsd_exporter_escape_cache_items",
+			Help: "The number of items in the escape cache.",
+		},
+	)
 )
 
 func init() {
@@ -157,4 +175,7 @@ func init() {
 	prometheus.MustRegister(errorEventStats)
 	prometheus.MustRegister(eventsActions)
 	prometheus.MustRegister(metricsCount)
+	prometheus.MustRegister(escapeCacheGets)
+	prometheus.MustRegister(escapeCacheHits)
+	prometheus.MustRegister(escapeCacheItems)
 }

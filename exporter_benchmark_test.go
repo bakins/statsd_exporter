@@ -138,7 +138,7 @@ mappings:
 		b.Fatalf("Config load error: %s %s", config, err)
 	}
 
-	ex := NewExporter(testMapper)
+	ex := NewExporter(testMapper, nil)
 	for i := 0; i < b.N; i++ {
 		ec := make(chan Events, 1000)
 		go func() {

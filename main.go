@@ -142,6 +142,7 @@ func main() {
 		eventFlushThreshold  = kingpin.Flag("statsd.event-flush-threshold", "Number of events to hold in queue before flushing").Default("1000").Int()
 		eventFlushInterval   = kingpin.Flag("statsd.event-flush-interval", "Number of events to hold in queue before flushing").Default("200ms").Duration()
 		dumpFSMPath          = kingpin.Flag("debug.dump-fsm", "The path to dump internal FSM generated for glob matching as Dot file.").Default("").String()
+		escapeCacheSize      = kingpin.Flag("statsd.escape-cache-size", "Maximum size of your metric/tag escape cache. Relies on random replacement policy if max size is reached.").Default("0").Int()
 	)
 
 	log.AddFlags(kingpin.CommandLine)
@@ -159,6 +160,8 @@ func main() {
 	log.Infoln("Accepting Prometheus Requests on", *listenAddress)
 
 	go serveHTTP(*listenAddress, *metricsEndpoint)
+
+	escapeCache := newEscapeMetricNameCache(*escapeCacheSize)
 
 	events := make(chan Events, *eventQueueSize)
 	defer close(events)
@@ -178,7 +181,7 @@ func main() {
 			}
 		}
 
-		ul := &StatsDUDPListener{conn: uconn, eventHandler: eventQueue}
+		ul := &StatsDUDPListener{conn: uconn, eventHandler: eventQueue, escapeCache: escapeCache}
 		go ul.Listen()
 	}
 
@@ -190,7 +193,7 @@ func main() {
 		}
 		defer tconn.Close()
 
-		tl := &StatsDTCPListener{conn: tconn, eventHandler: eventQueue}
+		tl := &StatsDTCPListener{conn: tconn, eventHandler: eventQueue, escapeCache: escapeCache}
 		go tl.Listen()
 	}
 
@@ -216,7 +219,7 @@ func main() {
 			}
 		}
 
-		ul := &StatsDUnixgramListener{conn: uxgconn, eventHandler: eventQueue}
+		ul := &StatsDUnixgramListener{conn: uxgconn, eventHandler: eventQueue, escapeCache: escapeCache}
 		go ul.Listen()
 
 		// if it's an abstract unix domain socket, it won't exist on fs
@@ -256,7 +259,7 @@ func main() {
 
 	go configReloader(*mappingConfig, mapper, *cacheSize)
 
-	exporter := NewExporter(mapper)
+	exporter := NewExporter(mapper, escapeCache)
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)

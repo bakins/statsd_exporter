@@ -58,7 +58,7 @@ func TestNegativeCounter(t *testing.T) {
 	testMapper := mapper.MetricMapper{}
 	testMapper.InitCache(0)
 
-	ex := NewExporter(&testMapper)
+	ex := NewExporter(&testMapper, nil)
 	ex.Listen(events)
 
 	updated := getTelemetryCounterValue(errorCounter)
@@ -139,7 +139,7 @@ mappings:
 		t.Fatalf("Config load error: %s %s", config, err)
 	}
 
-	ex := NewExporter(testMapper)
+	ex := NewExporter(testMapper, nil)
 	ex.Listen(events)
 
 	metrics, err := prometheus.DefaultGatherer.Gather()
@@ -197,7 +197,7 @@ mappings:
 		t.Fatalf("Config load error: %s %s", config, err)
 	}
 
-	ex := NewExporter(testMapper)
+	ex := NewExporter(testMapper, nil)
 	ex.Listen(events)
 
 	metrics, err := prometheus.DefaultGatherer.Gather()
@@ -412,7 +412,7 @@ mappings:
 				events <- s.in
 				close(events)
 			}()
-			ex := NewExporter(testMapper)
+			ex := NewExporter(testMapper, nil)
 			ex.Listen(events)
 
 			metrics, err := prometheus.DefaultGatherer.Gather()
@@ -467,7 +467,7 @@ mappings:
 	errorCounter := errorEventStats.WithLabelValues("empty_metric_name")
 	prev := getTelemetryCounterValue(errorCounter)
 
-	ex := NewExporter(testMapper)
+	ex := NewExporter(testMapper, nil)
 	ex.Listen(events)
 
 	updated := getTelemetryCounterValue(errorCounter)
@@ -502,7 +502,7 @@ func TestInvalidUtf8InDatadogTagValue(t *testing.T) {
 	testMapper := mapper.MetricMapper{}
 	testMapper.InitCache(0)
 
-	ex := NewExporter(&testMapper)
+	ex := NewExporter(&testMapper, nil)
 	ex.Listen(events)
 }
 
@@ -516,7 +516,7 @@ func TestSummaryWithQuantilesEmptyMapping(t *testing.T) {
 		testMapper := mapper.MetricMapper{}
 		testMapper.InitCache(0)
 
-		ex := NewExporter(&testMapper)
+		ex := NewExporter(&testMapper, nil)
 		ex.Listen(events)
 	}()
 
@@ -560,7 +560,7 @@ func TestHistogramUnits(t *testing.T) {
 	go func() {
 		testMapper := mapper.MetricMapper{}
 		testMapper.InitCache(0)
-		ex := NewExporter(&testMapper)
+		ex := NewExporter(&testMapper, nil)
 		ex.mapper.Defaults.TimerType = mapper.TimerTypeHistogram
 		ex.Listen(events)
 	}()
@@ -599,7 +599,7 @@ func TestCounterIncrement(t *testing.T) {
 	go func() {
 		testMapper := mapper.MetricMapper{}
 		testMapper.InitCache(0)
-		ex := NewExporter(&testMapper)
+		ex := NewExporter(&testMapper, nil)
 		ex.Listen(events)
 	}()
 
@@ -693,7 +693,7 @@ func TestEscapeMetricName(t *testing.T) {
 	}
 
 	for in, want := range scenarios {
-		if got := escapeMetricName(in); want != got {
+		if got := escapeMetricName(in, nil); want != got {
 			t.Errorf("expected `%s` to be escaped to `%s`, got `%s`", in, want, got)
 		}
 	}
@@ -726,7 +726,7 @@ mappings:
 	events := make(chan Events)
 	defer close(events)
 	go func() {
-		ex := NewExporter(testMapper)
+		ex := NewExporter(testMapper, nil)
 		ex.Listen(events)
 	}()
 
@@ -934,8 +934,32 @@ func BenchmarkEscapeMetricName(b *testing.B) {
 
 	for _, s := range scenarios {
 		b.Run(s, func(b *testing.B) {
+			b.ResetTimer()
 			for n := 0; n < b.N; n++ {
-				escapeMetricName(s)
+				escapeMetricName(s, nil)
+			}
+		})
+	}
+}
+
+func BenchmarkEscapeMetricNameCached(b *testing.B) {
+	scenarios := []string{
+		"clean",
+		"0starts_with_digit",
+		"with_underscore",
+		"with.dot",
+		"with😱emoji",
+		"with.*.multiple",
+		"test.web-server.foo.bar",
+		"",
+	}
+
+	for _, s := range scenarios {
+		b.Run(s, func(b *testing.B) {
+			c := newEscapeMetricNameCache(4)
+			b.ResetTimer()
+			for n := 0; n < b.N; n++ {
+				escapeMetricName(s, c)
 			}
 		})
 	}
@@ -954,7 +978,28 @@ func BenchmarkParseDogStatsDTags(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			for n := 0; n < b.N; n++ {
 				labels := map[string]string{}
-				parseDogStatsDTags(tags, labels)
+				parseDogStatsDTags(tags, labels, nil)
+			}
+		})
+	}
+}
+
+func BenchmarkParseDogStatsDTagsCached(b *testing.B) {
+	scenarios := map[string]string{
+		"1 tag w/hash":         "#test:tag",
+		"1 tag w/o hash":       "test:tag",
+		"2 tags, mixed hashes": "tag1:test,#tag2:test",
+		"3 long tags":          "tag1:reallylongtagthisisreallylong,tag2:anotherreallylongtag,tag3:thisisyetanotherextraordinarilylongtag",
+		"a-z tags":             "a:0,b:1,c:2,d:3,e:4,f:5,g:6,h:7,i:8,j:9,k:0,l:1,m:2,n:3,o:4,p:5,q:6,r:7,s:8,t:9,u:0,v:1,w:2,x:3,y:4,z:5",
+	}
+
+	for name, tags := range scenarios {
+		b.Run(name, func(b *testing.B) {
+			c := newEscapeMetricNameCache(64)
+			b.ResetTimer()
+			for n := 0; n < b.N; n++ {
+				labels := map[string]string{}
+				parseDogStatsDTags(tags, labels, c)
 			}
 		})
 	}
