@@ -113,7 +113,7 @@ func (eq *eventQueue) flush() {
 
 func (eq *eventQueue) flushUnlocked() {
 	eq.c <- eq.q
-	eq.q = make([]Event, 0, cap(eq.q))
+	eq.q = make([]Event, 0, eq.flushThreshold)
 	eventsFlushed.Inc()
 }
 
